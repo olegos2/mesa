@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include "wrapper_private.h"
 #include "wrapper_entrypoints.h"
 #include "wrapper_trampolines.h"
