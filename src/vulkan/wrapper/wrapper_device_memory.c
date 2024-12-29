@@ -7,6 +7,7 @@
 #undef buffer_handle_t
 #include "util/os_file.h"
 #include "vk_util.h"
+#include <fcntl.h>
 
 #include <android/hardware_buffer.h>
 #include <vndk/hardware_buffer.h>
