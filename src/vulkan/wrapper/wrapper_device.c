@@ -22,8 +22,6 @@ const struct vk_device_extension_table wrapper_device_extensions =
    .KHR_present_id = true,
    .KHR_present_wait = true,
    .KHR_incremental_present = true,
-   .KHR_map_memory2 = true,
-   .EXT_map_memory_placed = true,
 };
 
 const struct vk_device_extension_table wrapper_filter_extensions =
@@ -35,12 +33,15 @@ const struct vk_device_extension_table wrapper_filter_extensions =
 };
 
 static void
-wrapper_filter_enabled_extensions(const struct vk_device *device,
+wrapper_filter_enabled_extensions(const struct wrapper_device *device,
                                   uint32_t *enable_extension_count,
                                   const char **enable_extensions)
 {
    for (int idx = 0; idx < VK_DEVICE_EXTENSION_COUNT; idx++) {
-      if (!device->enabled_extensions.extensions[idx])
+      if (!device->vk.enabled_extensions.extensions[idx])
+         continue;
+
+      if (!device->physical->base_supported_extensions.extensions[idx])
          continue;
 
       if (wrapper_device_extensions.extensions[idx])
@@ -141,7 +142,7 @@ wrapper_CreateDevice(VkPhysicalDevice physicalDevice,
       return vk_error(physical_device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    list_inithead(&device->command_buffer_list);
-   list_inithead(&device->memory_data_list);
+   list_inithead(&device->device_memory_list);
    simple_mtx_init(&device->resource_mutex, mtx_plain);
    device->physical = physical_device;
 
@@ -161,26 +162,23 @@ wrapper_CreateDevice(VkPhysicalDevice physicalDevice,
       return vk_error(physical_device, result);
    }
 
-   wrapper_filter_enabled_extensions(&device->vk,
-                                     &wrapper_enable_extension_count,
-                                     wrapper_enable_extensions);
+   wrapper_filter_enabled_extensions(device,
+      &wrapper_enable_extension_count, wrapper_enable_extensions);
    wrapper_append_required_extensions(&device->vk,
-                                      &wrapper_enable_extension_count,
-                                      wrapper_enable_extensions);
+      &wrapper_enable_extension_count, wrapper_enable_extensions);
 
    wrapper_create_info.enabledExtensionCount = wrapper_enable_extension_count;
    wrapper_create_info.ppEnabledExtensionNames = wrapper_enable_extensions;
 
-   pdf = (void *)pCreateInfo->pEnabledFeatures;
-   if (pdf && pdf->textureCompressionBC) {
-      pdf->textureCompressionBC &=
-         physical_device->backup_supported_features.textureCompressionBC;
-   }
-   pdf2 = __vk_find_struct((void *)pCreateInfo->pNext,
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2);
-   if (pdf2 && pdf2->features.textureCompressionBC) {
-      pdf2->features.textureCompressionBC &=
-         physical_device->backup_supported_features.textureCompressionBC;
+   if (physical_device->enable_bc) {
+      pdf = (void *)pCreateInfo->pEnabledFeatures;
+      if (pdf && pdf->textureCompressionBC)
+         pdf->textureCompressionBC = false;
+
+      pdf2 = __vk_find_struct((void *)pCreateInfo->pNext,
+         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2);
+      if (pdf2 && pdf2->features.textureCompressionBC)
+         pdf2->features.textureCompressionBC = false;
    }
 
    result = physical_device->dispatch_table.CreateDevice(
@@ -203,6 +201,19 @@ wrapper_CreateDevice(VkPhysicalDevice physicalDevice,
       wrapper_DestroyDevice(wrapper_device_to_handle(device),
                             &device->vk.alloc);
       return vk_error(physical_device, result);
+   }
+
+   if (!physical_device->enable_map_memory_placed) {
+      device->vk.dispatch_table.AllocateMemory =
+         wrapper_device_trampolines.AllocateMemory;
+      device->vk.dispatch_table.MapMemory2 =
+         wrapper_device_trampolines.MapMemory2;
+      device->vk.dispatch_table.UnmapMemory =
+         wrapper_device_trampolines.UnmapMemory;
+      device->vk.dispatch_table.UnmapMemory2 =
+         wrapper_device_trampolines.UnmapMemory2;
+      device->vk.dispatch_table.FreeMemory =
+         wrapper_device_trampolines.FreeMemory;
    }
 
    *pDevice = wrapper_device_to_handle(device);
@@ -452,6 +463,10 @@ wrapper_DestroyDevice(VkDevice _device, const VkAllocationCallbacks* pAllocator)
    list_for_each_entry_safe(struct wrapper_command_buffer, wcb,
                             &device->command_buffer_list, link) {
       wrapper_command_buffer_destroy(device, wcb);
+   }
+   list_for_each_entry_safe(struct wrapper_device_memory, mem,
+                            &device->device_memory_list, link) {
+      wrapper_device_memory_destroy(mem);
    }
 
    simple_mtx_unlock(&device->resource_mutex);

@@ -12,6 +12,11 @@ extern const struct vk_instance_extension_table wrapper_instance_extensions;
 extern const struct vk_device_extension_table wrapper_device_extensions;
 extern const struct vk_device_extension_table wrapper_filter_extensions;
 
+extern uint64_t WRAPPER_DEBUG;
+
+#define WRAPPER_MAP_MEMORY_PLACED      (1ull << 0)
+#define WRAPPER_BC                     (1ull << 1)
+
 struct wrapper_instance {
    struct vk_instance vk;
 
@@ -26,13 +31,16 @@ struct wrapper_physical_device {
    struct vk_physical_device vk;
 
    int dma_heap_fd;
+   bool enable_map_memory_placed;
+   bool enable_bc;
    VkPhysicalDevice dispatch_handle;
    VkPhysicalDeviceProperties2 properties2;
    VkPhysicalDeviceDriverProperties driver_properties;
    VkPhysicalDeviceMemoryProperties memory_properties;
    struct wsi_device wsi_device;
    struct wrapper_instance *instance;
-   struct vk_features backup_supported_features;
+   struct vk_features base_supported_features;
+   struct vk_device_extension_table base_supported_extensions;
    struct vk_physical_device_dispatch_table dispatch_table;
 };
 
@@ -55,7 +63,7 @@ struct wrapper_device {
    VkDevice dispatch_handle;
    simple_mtx_t resource_mutex;
    struct list_head command_buffer_list;
-   struct list_head memory_data_list;
+   struct list_head device_memory_list;
    struct wrapper_physical_device *physical;
    struct vk_device_dispatch_table dispatch_table;
 };
@@ -75,7 +83,7 @@ struct wrapper_command_buffer {
 VK_DEFINE_HANDLE_CASTS(wrapper_command_buffer, vk.base, VkCommandBuffer,
                        VK_OBJECT_TYPE_COMMAND_BUFFER)
 
-struct wrapper_memory_data {
+struct wrapper_device_memory {
    struct AHardwareBuffer *ahardware_buffer;
    struct wrapper_device *device;
    struct list_head link;
@@ -83,7 +91,7 @@ struct wrapper_memory_data {
    void *map_address;
    size_t map_size;
    size_t alloc_size;
-   VkDeviceMemory memory;
+   VkDeviceMemory dispatch_handle;
    const VkAllocationCallbacks *alloc;
 };
 
@@ -97,3 +105,10 @@ uint32_t
 wrapper_select_device_memory_type(struct wrapper_device *device,
                                   VkMemoryPropertyFlags flags);
 
+VkResult
+wrapper_device_memory_create(struct wrapper_device *device,
+                             const VkAllocationCallbacks *alloc,
+                             struct wrapper_device_memory **out_mem);
+
+void
+wrapper_device_memory_destroy(struct wrapper_device_memory *mem);
